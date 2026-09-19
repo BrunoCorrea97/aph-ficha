@@ -77,7 +77,7 @@ export function NovoAtendimentoWizard() {
               type="button"
               onClick={() => {
                 atualizar((a) => ({ ...a, natureza: "TRAUMA" as Natureza }));
-                avancar();
+                setPasso(1);
               }}
               className="alvo-toque rounded-lg border border-border bg-surface-raised py-8 text-xl font-semibold text-text"
             >
@@ -87,7 +87,7 @@ export function NovoAtendimentoWizard() {
               type="button"
               onClick={() => {
                 atualizar((a) => ({ ...a, natureza: "CLINICO" as Natureza }));
-                avancar();
+                setPasso(1);
               }}
               className="alvo-toque rounded-lg border border-border bg-surface-raised py-8 text-xl font-semibold text-text"
             >
