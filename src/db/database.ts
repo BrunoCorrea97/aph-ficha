@@ -86,6 +86,8 @@ export interface Atendimento {
   criadoEm: string;
   atualizadoEm: string;
   local?: string;
+  localLatitude?: number;
+  localLongitude?: number;
   natureza?: Natureza;
   avaliacaoTrauma?: AvaliacaoTrauma;
   avaliacaoClinica?: AvaliacaoClinica;

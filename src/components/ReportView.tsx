@@ -1,5 +1,6 @@
 import type { Atendimento } from "../db/database";
 import { gerarRelatorioPdf } from "../pdf/gerarRelatorioPdf";
+import { gerarLinkMaps } from "../utils/maps";
 
 const NATUREZA_CLINICA_LABEL: Record<string, string> = {
   AVE: "AVE",
@@ -36,6 +37,7 @@ export function ReportView({ atendimento }: { atendimento: Atendimento }) {
 
   const t = atendimento.avaliacaoTrauma;
   const c = atendimento.avaliacaoClinica;
+  const linkMaps = gerarLinkMaps(atendimento);
 
   return (
     <div>
@@ -50,7 +52,16 @@ export function ReportView({ atendimento }: { atendimento: Atendimento }) {
       <section className="mb-6 rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-2 text-lg font-medium text-accent-strong">Identificação</h2>
         <Campo label="Início" valor={fmt(atendimento.criadoEm)} />
-        <Campo label="Local" valor={atendimento.local || "não informado"} />
+        <div className="flex justify-between border-b border-border/50 py-2 text-sm">
+          <span className="text-text-muted">Local</span>
+          {linkMaps ? (
+            <a href={linkMaps} target="_blank" rel="noreferrer" className="text-right text-accent-strong underline">
+              {atendimento.local}
+            </a>
+          ) : (
+            <span className="text-right text-text">não informado</span>
+          )}
+        </div>
         <Campo
           label="Natureza"
           valor={

@@ -75,7 +75,15 @@ export function NovoAtendimentoWizard() {
           <h1 className="mb-4 text-2xl font-semibold text-text">Local do Atendimento</h1>
           <LocalField
             valor={atendimento.local}
-            onChange={(local) => atualizar((a) => ({ ...a, local }))}
+            onChange={(local) => atualizar((a) => ({ ...a, local, localLatitude: undefined, localLongitude: undefined }))}
+            onLocalizacaoGps={(resultado) =>
+              atualizar((a) => ({
+                ...a,
+                local: resultado.texto,
+                localLatitude: resultado.latitude,
+                localLongitude: resultado.longitude,
+              }))
+            }
           />
 
           <h1 className="mb-6 mt-6 text-2xl font-semibold text-text">Natureza da Ocorrência</h1>
@@ -637,7 +645,15 @@ function ReavaliacaoStep({
   );
 }
 
-function LocalField({ valor, onChange }: { valor: string | undefined; onChange: (v: string) => void }) {
+function LocalField({
+  valor,
+  onChange,
+  onLocalizacaoGps,
+}: {
+  valor: string | undefined;
+  onChange: (v: string) => void;
+  onLocalizacaoGps: (resultado: import("../utils/geolocation").ResultadoLocalizacao) => void;
+}) {
   const [buscando, setBuscando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -646,7 +662,7 @@ function LocalField({ valor, onChange }: { valor: string | undefined; onChange: 
     setErro(null);
     try {
       const resultado = await obterLocalizacaoAtual();
-      onChange(resultado.texto);
+      onLocalizacaoGps(resultado);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível obter a localização.");
     } finally {

@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { Atendimento } from "../db/database";
+import { gerarLinkMaps } from "../utils/maps";
 
 function formatarHorario(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR");
@@ -37,7 +38,14 @@ export function gerarRelatorioPdf(atendimento: Atendimento): Blob {
   doc.text(`Início do atendimento: ${formatarHorario(atendimento.criadoEm)}`, margemEsquerda, y);
   y += 14;
   if (atendimento.local) {
-    doc.text(`Local: ${atendimento.local}`, margemEsquerda, y);
+    const linkMaps = gerarLinkMaps(atendimento);
+    if (linkMaps) {
+      doc.setTextColor(29, 78, 216);
+      doc.textWithLink(`Local: ${atendimento.local}`, margemEsquerda, y, { url: linkMaps });
+      doc.setTextColor(0, 0, 0);
+    } else {
+      doc.text(`Local: ${atendimento.local}`, margemEsquerda, y);
+    }
     y += 14;
   }
   const naturezaTexto =
