@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import type { DadosVitima } from "../db/database";
 import { redimensionarImagem } from "../utils/image";
+import { MaskedDateInput } from "../components/MaskedDateInput";
+import { extrairDadosDocumento } from "../utils/ocr";
 
 /**
  * Última etapa antes do relatório: identificação da vítima e, opcional,
@@ -19,21 +21,52 @@ export function VitimaDadosStep({
   onChange: (v: DadosVitima) => void;
 }) {
   const [processandoFoto, setProcessandoFoto] = useState(false);
+  const [extraindoDados, setExtraindoDados] = useState(false);
   const [erroFoto, setErroFoto] = useState<string | null>(null);
+  const [avisoExtracao, setAvisoExtracao] = useState<string | null>(null);
   const inputFotoRef = useRef<HTMLInputElement>(null);
 
   async function handleFoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setErroFoto(null);
+    setAvisoExtracao(null);
     setProcessandoFoto(true);
+
+    let dataUrl: string;
     try {
-      const dataUrl = await redimensionarImagem(file);
+      dataUrl = await redimensionarImagem(file);
       onChange({ ...valor, fotoDocumentoDataUrl: dataUrl });
     } catch {
       setErroFoto("Não foi possível processar a foto. Tente novamente.");
+      setProcessandoFoto(false);
+      e.target.value = "";
+      return;
+    }
+    setProcessandoFoto(false);
+
+    setExtraindoDados(true);
+    try {
+      const extraido = await extrairDadosDocumento(dataUrl);
+      onChange({
+        ...valor,
+        fotoDocumentoDataUrl: dataUrl,
+        nome: valor?.nome || extraido.nome,
+        documentoCpfRg: valor?.documentoCpfRg || extraido.documentoCpfRg,
+        dataNascimento: valor?.dataNascimento || extraido.dataNascimento,
+      });
+      if (!extraido.nome && !extraido.documentoCpfRg && !extraido.dataNascimento) {
+        setAvisoExtracao("Não consegui identificar os dados automaticamente — preencha manualmente.");
+      } else {
+        setAvisoExtracao("Dados extraídos automaticamente — confira e corrija se necessário.");
+      }
+    } catch {
+      setAvisoExtracao(
+        "Extração automática não disponível neste arquivo/aparelho agora — a foto foi salva normalmente, preencha os campos manualmente."
+      );
     } finally {
       setProcessandoFoto(false);
+      setExtraindoDados(false);
       e.target.value = "";
     }
   }
@@ -58,6 +91,7 @@ export function VitimaDadosStep({
         <label className="mb-1 block text-sm text-text-muted">CPF/RG</label>
         <input
           value={valor?.documentoCpfRg ?? ""}
+          inputMode="numeric"
           onChange={(e) => onChange({ ...valor, documentoCpfRg: e.target.value })}
           className="alvo-toque w-full rounded-lg border border-border bg-surface px-4 text-lg text-text"
         />
@@ -65,11 +99,9 @@ export function VitimaDadosStep({
 
       <div className="mb-6">
         <label className="mb-1 block text-sm text-text-muted">Data de nascimento</label>
-        <input
-          type="date"
-          value={valor?.dataNascimento ?? ""}
-          onChange={(e) => onChange({ ...valor, dataNascimento: e.target.value })}
-          className="alvo-toque w-full rounded-lg border border-border bg-surface px-4 text-text"
+        <MaskedDateInput
+          valor={valor?.dataNascimento}
+          onChange={(dataNascimento) => onChange({ ...valor, dataNascimento })}
         />
       </div>
 
@@ -85,14 +117,16 @@ export function VitimaDadosStep({
             <button
               type="button"
               onClick={() => inputFotoRef.current?.click()}
-              className="alvo-toque rounded-lg border border-border text-sm font-medium text-text"
+              disabled={processandoFoto || extraindoDados}
+              className="alvo-toque rounded-lg border border-border text-sm font-medium text-text disabled:opacity-60"
             >
-              Tirar outra foto
+              {extraindoDados ? "Lendo dados…" : "Tirar outra foto"}
             </button>
             <button
               type="button"
               onClick={() => onChange({ ...valor, fotoDocumentoDataUrl: undefined })}
-              className="alvo-toque rounded-lg border border-prioridade-vermelha/50 text-sm font-medium text-prioridade-vermelha"
+              disabled={processandoFoto || extraindoDados}
+              className="alvo-toque rounded-lg border border-prioridade-vermelha/50 text-sm font-medium text-prioridade-vermelha disabled:opacity-60"
             >
               Remover foto
             </button>
@@ -102,13 +136,18 @@ export function VitimaDadosStep({
         <button
           type="button"
           onClick={() => inputFotoRef.current?.click()}
-          disabled={processandoFoto}
+          disabled={processandoFoto || extraindoDados}
           className="alvo-toque w-full rounded-lg border border-dashed border-border text-text-muted disabled:opacity-60"
         >
-          {processandoFoto ? "Processando…" : "📷 Fotografar documento"}
+          {processandoFoto
+            ? "Processando…"
+            : extraindoDados
+              ? "Lendo dados do documento…"
+              : "📷 Fotografar documento"}
         </button>
       )}
       {erroFoto && <p className="mt-2 text-sm text-prioridade-amarela">{erroFoto}</p>}
+      {avisoExtracao && <p className="mt-2 text-sm text-text-muted">{avisoExtracao}</p>}
 
       <input
         ref={inputFotoRef}
