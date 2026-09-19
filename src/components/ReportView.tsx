@@ -159,6 +159,9 @@ export function ReportView({ atendimento }: { atendimento: Atendimento }) {
             {atendimento.reavaliacoes.map((r) => (
               <li key={r.id}>
                 {fmt(r.horario)} — {r.alteracoes || "sem alterações relatadas"}
+                {r.glasgow?.total !== undefined && (
+                  <span className="valor-numerico text-text-muted"> · Glasgow: {r.glasgow.total}</span>
+                )}
               </li>
             ))}
           </ul>

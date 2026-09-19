@@ -6,6 +6,7 @@ import { QuickChoice } from "../components/QuickChoice";
 import { FlowProgress } from "../components/FlowProgress";
 import { GlasgowScale } from "../components/GlasgowScale";
 import { ReportView } from "../components/ReportView";
+import { obterLocalizacaoAtual } from "../utils/geolocation";
 
 function novoAtendimentoVazio(): Atendimento {
   const agora = new Date().toISOString();
@@ -71,7 +72,13 @@ export function NovoAtendimentoWizard() {
 
       {etapaAtual === "Natureza" && (
         <div>
-          <h1 className="mb-6 text-2xl font-semibold text-text">Natureza da Ocorrência</h1>
+          <h1 className="mb-4 text-2xl font-semibold text-text">Local do Atendimento</h1>
+          <LocalField
+            valor={atendimento.local}
+            onChange={(local) => atualizar((a) => ({ ...a, local }))}
+          />
+
+          <h1 className="mb-6 mt-6 text-2xl font-semibold text-text">Natureza da Ocorrência</h1>
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
@@ -372,7 +379,7 @@ export function NovoAtendimentoWizard() {
       {etapaAtual === "Reavaliação" && (
         <ReavaliacaoStep
           atendimento={atendimento}
-          onAdicionar={(alteracoes, vitais) =>
+          onAdicionar={(alteracoes, vitais, glasgow) =>
             atualizar((a) => {
               const vitaisId = novoId();
               return {
@@ -380,7 +387,7 @@ export function NovoAtendimentoWizard() {
                 sinaisVitais: vitais ? [...a.sinaisVitais, { ...vitais, id: vitaisId, momento: "REAVALIACAO", horario: new Date().toISOString() }] : a.sinaisVitais,
                 reavaliacoes: [
                   ...a.reavaliacoes,
-                  { id: novoId(), horario: new Date().toISOString(), alteracoes, sinaisVitaisId: vitais ? vitaisId : undefined },
+                  { id: novoId(), horario: new Date().toISOString(), alteracoes, sinaisVitaisId: vitais ? vitaisId : undefined, glasgow },
                 ],
               };
             })
@@ -530,11 +537,12 @@ function ReavaliacaoStep({
   onAdicionar,
 }: {
   atendimento: Atendimento;
-  onAdicionar: (alteracoes: string, vitais?: Partial<SinaisVitais>) => void;
+  onAdicionar: (alteracoes: string, vitais?: Partial<SinaisVitais>, glasgow?: import("../db/database").GlasgowResultado) => void;
 }) {
   const [mostrarForm, setMostrarForm] = useState(false);
   const [alteracoes, setAlteracoes] = useState("");
   const [vitais, setVitais] = useState<Partial<SinaisVitais>>({});
+  const [glasgow, setGlasgow] = useState<import("../db/database").GlasgowResultado>({});
 
   return (
     <div>
@@ -550,6 +558,9 @@ function ReavaliacaoStep({
             <li key={r.id} className="rounded-lg border border-border bg-surface px-4 py-3">
               <p className="text-sm text-text-muted">{new Date(r.horario).toLocaleTimeString("pt-BR")}</p>
               <p className="text-text">{r.alteracoes || "sem alterações relatadas"}</p>
+              {r.glasgow?.total !== undefined && (
+                <p className="valor-numerico mt-1 text-sm text-text-muted">Glasgow: {r.glasgow.total}</p>
+              )}
             </li>
           ))}
         </ul>
@@ -588,13 +599,17 @@ function ReavaliacaoStep({
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <p className="mb-2 mt-4 text-sm font-medium text-text-muted">Escala de Glasgow (opcional)</p>
+          <GlasgowScale value={glasgow} onChange={setGlasgow} />
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={() => {
                 setMostrarForm(false);
                 setAlteracoes("");
                 setVitais({});
+                setGlasgow({});
               }}
               className="alvo-toque rounded-lg border border-border text-text"
             >
@@ -604,10 +619,12 @@ function ReavaliacaoStep({
               type="button"
               onClick={() => {
                 const temVitais = Object.values(vitais).some((v) => v !== undefined);
-                onAdicionar(alteracoes, temVitais ? vitais : undefined);
+                const temGlasgow = glasgow.total !== undefined;
+                onAdicionar(alteracoes, temVitais ? vitais : undefined, temGlasgow ? glasgow : undefined);
                 setMostrarForm(false);
                 setAlteracoes("");
                 setVitais({});
+                setGlasgow({});
               }}
               className="alvo-toque rounded-lg bg-accent text-white"
             >
@@ -616,6 +633,44 @@ function ReavaliacaoStep({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LocalField({ valor, onChange }: { valor: string | undefined; onChange: (v: string) => void }) {
+  const [buscando, setBuscando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function usarLocalizacaoAtual() {
+    setBuscando(true);
+    setErro(null);
+    try {
+      const resultado = await obterLocalizacaoAtual();
+      onChange(resultado.texto);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível obter a localização.");
+    } finally {
+      setBuscando(false);
+    }
+  }
+
+  return (
+    <div>
+      <input
+        value={valor ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Endereço ou referência do local"
+        className="alvo-toque mb-2 w-full rounded-lg border border-border bg-surface px-4 text-lg text-text"
+      />
+      <button
+        type="button"
+        onClick={usarLocalizacaoAtual}
+        disabled={buscando}
+        className="alvo-toque w-full rounded-lg border border-dashed border-border text-sm font-medium text-text-muted disabled:opacity-60"
+      >
+        {buscando ? "Obtendo localização…" : "📍 Usar minha localização atual"}
+      </button>
+      {erro && <p className="mt-2 text-sm text-prioridade-amarela">{erro}</p>}
     </div>
   );
 }

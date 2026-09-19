@@ -35,6 +35,7 @@ export interface Reavaliacao {
   horario: string;
   alteracoes?: string;
   sinaisVitaisId?: string; // referencia um registro em sinaisVitais
+  glasgow?: GlasgowResultado;
 }
 
 export interface Procedimento {

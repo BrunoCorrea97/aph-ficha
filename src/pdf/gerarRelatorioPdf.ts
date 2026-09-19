@@ -202,7 +202,8 @@ export function gerarRelatorioPdf(atendimento: Atendimento): Blob {
     y += 14;
   } else {
     for (const r of atendimento.reavaliacoes) {
-      doc.text(`${formatarHorario(r.horario)} — ${r.alteracoes || "sem alterações relatadas"}`, margemEsquerda, y);
+      const glasgowTexto = r.glasgow?.total !== undefined ? ` · Glasgow: ${r.glasgow.total}` : "";
+      doc.text(`${formatarHorario(r.horario)} — ${r.alteracoes || "sem alterações relatadas"}${glasgowTexto}`, margemEsquerda, y);
       y += 14;
     }
   }
