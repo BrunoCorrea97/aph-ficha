@@ -57,6 +57,42 @@ export function gerarRelatorioPdf(atendimento: Atendimento): Blob {
   doc.text(`Natureza: ${naturezaTexto}`, margemEsquerda, y);
   y += 20;
 
+  // Dados da Vítima
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Dados da Vítima", margemEsquerda, y);
+  y += 16;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(`Nome: ${atendimento.vitima?.nome || "não informado"}`, margemEsquerda, y);
+  y += 14;
+  doc.text(`CPF/RG: ${atendimento.vitima?.documentoCpfRg || "não informado"}`, margemEsquerda, y);
+  y += 14;
+  const dataNascTexto = atendimento.vitima?.dataNascimento
+    ? new Date(atendimento.vitima.dataNascimento + "T00:00:00").toLocaleDateString("pt-BR")
+    : "não informado";
+  doc.text(`Data de nascimento: ${dataNascTexto}`, margemEsquerda, y);
+  y += 16;
+
+  if (atendimento.vitima?.fotoDocumentoDataUrl) {
+    try {
+      const propriedades = doc.getImageProperties(atendimento.vitima.fotoDocumentoDataUrl);
+      const larguraMaxima = 220;
+      const largura = Math.min(larguraMaxima, propriedades.width);
+      const altura = (propriedades.height * largura) / propriedades.width;
+
+      if (y + altura > 780) {
+        doc.addPage();
+        y = 50;
+      }
+      doc.addImage(atendimento.vitima.fotoDocumentoDataUrl, "JPEG", margemEsquerda, y, largura, altura);
+      y += altura + 16;
+    } catch {
+      doc.text("(não foi possível incluir a foto do documento)", margemEsquerda, y);
+      y += 14;
+    }
+  }
+
   // Avaliação primária
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);

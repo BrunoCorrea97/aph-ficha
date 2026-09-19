@@ -75,6 +75,27 @@ export function ReportView({ atendimento }: { atendimento: Atendimento }) {
       </section>
 
       <section className="mb-6 rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-2 text-lg font-medium text-accent-strong">Dados da Vítima</h2>
+        <Campo label="Nome" valor={atendimento.vitima?.nome || "não informado"} />
+        <Campo label="CPF/RG" valor={atendimento.vitima?.documentoCpfRg || "não informado"} />
+        <Campo
+          label="Data de nascimento"
+          valor={
+            atendimento.vitima?.dataNascimento
+              ? new Date(atendimento.vitima.dataNascimento + "T00:00:00").toLocaleDateString("pt-BR")
+              : "não informado"
+          }
+        />
+        {atendimento.vitima?.fotoDocumentoDataUrl && (
+          <img
+            src={atendimento.vitima.fotoDocumentoDataUrl}
+            alt="Documento da vítima"
+            className="mt-3 max-h-64 w-full rounded-lg border border-border object-contain"
+          />
+        )}
+      </section>
+
+      <section className="mb-6 rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-2 text-lg font-medium text-accent-strong">Avaliação Primária</h2>
         {atendimento.natureza === "TRAUMA" && t ? (
           <>

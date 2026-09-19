@@ -81,6 +81,13 @@ export interface AvaliacaoClinica {
   glasgow?: GlasgowResultado;
 }
 
+export interface DadosVitima {
+  nome?: string;
+  documentoCpfRg?: string;
+  dataNascimento?: string; // YYYY-MM-DD
+  fotoDocumentoDataUrl?: string;
+}
+
 export interface Atendimento {
   id: string;
   criadoEm: string;
@@ -89,6 +96,7 @@ export interface Atendimento {
   localLatitude?: number;
   localLongitude?: number;
   natureza?: Natureza;
+  vitima?: DadosVitima;
   avaliacaoTrauma?: AvaliacaoTrauma;
   avaliacaoClinica?: AvaliacaoClinica;
   sample?: Sample;

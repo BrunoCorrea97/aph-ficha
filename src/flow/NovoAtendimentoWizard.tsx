@@ -7,6 +7,7 @@ import { FlowProgress } from "../components/FlowProgress";
 import { GlasgowScale } from "../components/GlasgowScale";
 import { ReportView } from "../components/ReportView";
 import { obterLocalizacaoAtual } from "../utils/geolocation";
+import { VitimaDadosStep } from "./VitimaDadosStep";
 
 function novoAtendimentoVazio(): Atendimento {
   const agora = new Date().toISOString();
@@ -27,7 +28,7 @@ function getEtapas(a: Atendimento): string[] {
     a.natureza === "TRAUMA"
       ? ["Natureza", "Cena e XABCDE", "SAMPLE"]
       : ["Natureza", "Avaliação Clínica", "SAMPLE"];
-  return [...base, "Sinais Vitais", "Procedimentos", "Reavaliação", "Relatório"];
+  return [...base, "Sinais Vitais", "Procedimentos", "Reavaliação", "Dados da Vítima", "Relatório"];
 }
 
 const CAMPOS_VITAIS: Array<{ key: keyof SinaisVitais; label: string }> = [
@@ -400,6 +401,13 @@ export function NovoAtendimentoWizard() {
               };
             })
           }
+        />
+      )}
+
+      {etapaAtual === "Dados da Vítima" && (
+        <VitimaDadosStep
+          valor={atendimento.vitima}
+          onChange={(vitima) => atualizar((a) => ({ ...a, vitima }))}
         />
       )}
 
