@@ -206,7 +206,8 @@ export async function extrairPorPosicao(
   try {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE });
 
-    async function lerCampo(campo: CampoPosicao): Promise<string> {
+    async function lerCampo(campo: CampoPosicao | undefined): Promise<string> {
+      if (!campo) return "";
       const recorte = await recortarCampo(imagemAlinhadaDataUrl, campo);
       const preparado = await prepararImagemParaOcr(recorte);
       const {
@@ -222,9 +223,9 @@ export async function extrairPorPosicao(
     ]);
 
     return {
-      nome: validarNome(textoNome),
-      dataNascimento: validarData(textoData),
-      documentoCpfRg: validarCpfRg(textoDoc),
+      nome: textoNome ? validarNome(textoNome) : undefined,
+      dataNascimento: textoData ? validarData(textoData) : undefined,
+      documentoCpfRg: textoDoc ? validarCpfRg(textoDoc) : undefined,
       textoCompleto: `${textoNome}\n${textoData}\n${textoDoc}`,
     };
   } finally {

@@ -87,11 +87,20 @@ export function ReportView({ atendimento }: { atendimento: Atendimento }) {
           }
         />
         {atendimento.vitima?.fotoDocumentoDataUrl && (
-          <img
-            src={atendimento.vitima.fotoDocumentoDataUrl}
-            alt="Documento da vítima"
-            className="mt-3 max-h-64 w-full rounded-lg border border-border object-contain"
-          />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <img
+              src={atendimento.vitima.fotoDocumentoDataUrl}
+              alt="Documento da vítima"
+              className="max-h-64 w-full rounded-lg border border-border object-contain"
+            />
+            {atendimento.vitima?.fotoDocumentoVersoDataUrl && (
+              <img
+                src={atendimento.vitima.fotoDocumentoVersoDataUrl}
+                alt="Documento da vítima (verso)"
+                className="max-h-64 w-full rounded-lg border border-border object-contain"
+              />
+            )}
+          </div>
         )}
       </section>
 

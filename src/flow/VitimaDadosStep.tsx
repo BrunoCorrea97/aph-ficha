@@ -2,25 +2,27 @@ import { useState } from "react";
 import type { DadosVitima } from "../db/database";
 import { redimensionarImagem } from "../utils/image";
 import { MaskedDateInput } from "../components/MaskedDateInput";
-import { extrairDadosDocumento, extrairPorPosicao } from "../utils/ocr";
-import { MODELO_CNH, MODELO_RG_RS, modeloCalibrado } from "../utils/documentTemplates";
+import { extrairDadosDocumento, extrairPorPosicao, type DadosExtraidos } from "../utils/ocr";
+import { MODELO_CNH, MODELO_RG_RS_FRENTE, MODELO_RG_RS_VERSO } from "../utils/documentTemplates";
 import { DocumentCameraCapture } from "./DocumentCameraCapture";
 
 type TipoDocumento = "CNH" | "RG_RS";
+type EtapaCameraRg = "FRENTE" | "VERSO" | null;
 
 /**
  * Última etapa antes do relatório: identificação da vítima e, opcional,
  * uma foto do documento para agilizar o preenchimento em campo.
  *
- * Fluxo de captura por tipo de documento:
- *   - CNH: câmera embutida com moldura de alinhamento — sabendo onde o
- *     documento está no quadro, recorta e lê cada campo (nome, CPF,
- *     nascimento) isoladamente, mais confiável que ler o documento
- *     inteiro de uma vez. Se algum campo não for lido por posição, cai
- *     para leitura de texto livre como reforço.
- *   - RG (RS): ainda não tem moldura calibrada — usa foto livre (câmera
- *     nativa) + leitura de texto livre; se não achar nada, pede
- *     preenchimento manual.
+ * Fluxo de captura por tipo de documento (câmera embutida com moldura de
+ * alinhamento — sabendo onde o documento está no quadro, recorta e lê
+ * cada campo isoladamente, mais confiável que ler o documento inteiro):
+ *   - CNH: uma foto (frente), lê nome, CPF e nascimento.
+ *   - RG (RS): duas fotos em sequência (frente, depois verso) — o
+ *     documento costuma estar plastificado e não dá pra abrir sem tirar
+ *     do plástico. Frente lê nome e nascimento; verso lê o CPF.
+ *
+ * Se a leitura por posição não achar nada em algum campo, tenta uma vez
+ * como reforço a leitura de texto livre na mesma foto antes de desistir.
  *
  * Tudo fica só no aparelho (IndexedDB local) — nada é enviado a nenhum
  * servidor.
@@ -33,24 +35,20 @@ export function VitimaDadosStep({
   onChange: (v: DadosVitima) => void;
 }) {
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento>("CNH");
-  const [mostrarCamera, setMostrarCamera] = useState(false);
+  const [etapaCamera, setEtapaCamera] = useState<EtapaCameraRg | "CNH">(null);
   const [extraindoDados, setExtraindoDados] = useState(false);
   const [avisoExtracao, setAvisoExtracao] = useState<string | null>(null);
 
-  const rgCalibrado = modeloCalibrado(MODELO_RG_RS);
+  function aplicarExtraidos(base: DadosVitima | undefined, extraido: Partial<DadosExtraidos>): DadosVitima {
+    return {
+      ...base,
+      nome: base?.nome || extraido.nome,
+      documentoCpfRg: base?.documentoCpfRg || extraido.documentoCpfRg,
+      dataNascimento: base?.dataNascimento || extraido.dataNascimento,
+    };
+  }
 
-  function aplicarExtraidos(dataUrl: string, extraido: {
-    nome?: string;
-    documentoCpfRg?: string;
-    dataNascimento?: string;
-  }) {
-    onChange({
-      ...valor,
-      fotoDocumentoDataUrl: dataUrl,
-      nome: valor?.nome || extraido.nome,
-      documentoCpfRg: valor?.documentoCpfRg || extraido.documentoCpfRg,
-      dataNascimento: valor?.dataNascimento || extraido.dataNascimento,
-    });
+  function avisar(extraido: Partial<DadosExtraidos>) {
     if (!extraido.nome && !extraido.documentoCpfRg && !extraido.dataNascimento) {
       setAvisoExtracao("Não consegui identificar os dados automaticamente — preencha manualmente.");
     } else {
@@ -59,21 +57,61 @@ export function VitimaDadosStep({
   }
 
   async function handleCapturaCnh(dataUrlAlinhado: string) {
-    setMostrarCamera(false);
-    onChange({ ...valor, fotoDocumentoDataUrl: dataUrlAlinhado });
+    setEtapaCamera(null);
+    const comFoto: DadosVitima = { ...valor, fotoDocumentoDataUrl: dataUrlAlinhado };
+    onChange(comFoto);
     setAvisoExtracao(null);
     setExtraindoDados(true);
     try {
       let extraido = await extrairPorPosicao(dataUrlAlinhado, MODELO_CNH);
-      // Reforço: se a leitura por posição não achou nada, tenta texto livre
-      // na mesma foto antes de desistir.
       if (!extraido.nome && !extraido.documentoCpfRg && !extraido.dataNascimento) {
         extraido = await extrairDadosDocumento(dataUrlAlinhado);
       }
-      aplicarExtraidos(dataUrlAlinhado, extraido);
+      onChange(aplicarExtraidos(comFoto, extraido));
+      avisar(extraido);
     } catch {
       setAvisoExtracao(
         "Extração automática não disponível neste aparelho agora — a foto foi salva normalmente, preencha os campos manualmente."
+      );
+    } finally {
+      setExtraindoDados(false);
+    }
+  }
+
+  async function handleCapturaRgFrente(dataUrlAlinhado: string) {
+    const comFoto: DadosVitima = { ...valor, fotoDocumentoDataUrl: dataUrlAlinhado };
+    onChange(comFoto);
+    setAvisoExtracao(null);
+    setExtraindoDados(true);
+    try {
+      const extraido = await extrairPorPosicao(dataUrlAlinhado, MODELO_RG_RS_FRENTE);
+      onChange(aplicarExtraidos(comFoto, extraido));
+    } catch {
+      // segue para o verso mesmo se a frente falhar — o CPF ainda pode vir de lá
+    } finally {
+      setExtraindoDados(false);
+      // Abre automaticamente a câmera do verso em seguida.
+      setEtapaCamera("VERSO");
+    }
+  }
+
+  async function handleCapturaRgVerso(dataUrlAlinhado: string) {
+    setEtapaCamera(null);
+    const comFoto: DadosVitima = { ...valor, fotoDocumentoVersoDataUrl: dataUrlAlinhado };
+    onChange(comFoto);
+    setExtraindoDados(true);
+    try {
+      const extraido = await extrairPorPosicao(dataUrlAlinhado, MODELO_RG_RS_VERSO);
+      onChange(aplicarExtraidos(comFoto, extraido));
+      avisar({
+        nome: comFoto.nome,
+        dataNascimento: comFoto.dataNascimento,
+        documentoCpfRg: extraido.documentoCpfRg,
+        textoCompleto: "",
+      });
+    } catch {
+      setAvisoExtracao(
+        "Extração automática não disponível neste aparelho agora — as fotos foram salvas normalmente, preencha os campos manualmente."
       );
     } finally {
       setExtraindoDados(false);
@@ -98,7 +136,8 @@ export function VitimaDadosStep({
     setExtraindoDados(true);
     try {
       const extraido = await extrairDadosDocumento(dataUrl);
-      aplicarExtraidos(dataUrl, extraido);
+      onChange(aplicarExtraidos({ ...valor, fotoDocumentoDataUrl: dataUrl }, extraido));
+      avisar(extraido);
     } catch {
       setAvisoExtracao(
         "Extração automática não disponível neste arquivo/aparelho agora — a foto foi salva normalmente, preencha os campos manualmente."
@@ -108,6 +147,8 @@ export function VitimaDadosStep({
       e.target.value = "";
     }
   }
+
+  const temFoto = Boolean(valor?.fotoDocumentoDataUrl);
 
   return (
     <div>
@@ -143,7 +184,7 @@ export function VitimaDadosStep({
         />
       </div>
 
-      {!valor?.fotoDocumentoDataUrl && (
+      {!temFoto && (
         <>
           <label className="mb-1 block text-sm text-text-muted">Tipo de documento</label>
           <div className="mb-3 grid grid-cols-2 gap-2">
@@ -174,17 +215,30 @@ export function VitimaDadosStep({
       )}
 
       <label className="mb-1 block text-sm text-text-muted">Foto do documento</label>
-      {valor?.fotoDocumentoDataUrl ? (
+      {temFoto ? (
         <div className="mb-2">
-          <img
-            src={valor.fotoDocumentoDataUrl}
-            alt="Documento da vítima"
-            className="mb-2 max-h-64 w-full rounded-lg border border-border object-contain"
-          />
+          <div className="mb-2 grid grid-cols-2 gap-2">
+            <img
+              src={valor!.fotoDocumentoDataUrl}
+              alt="Documento da vítima (frente)"
+              className="max-h-64 w-full rounded-lg border border-border object-contain"
+            />
+            {valor?.fotoDocumentoVersoDataUrl && (
+              <img
+                src={valor.fotoDocumentoVersoDataUrl}
+                alt="Documento da vítima (verso)"
+                className="max-h-64 w-full rounded-lg border border-border object-contain"
+              />
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => (tipoDocumento === "CNH" ? setMostrarCamera(true) : document.getElementById("input-rg-livre")?.click())}
+              onClick={() =>
+                tipoDocumento === "CNH"
+                  ? setEtapaCamera("CNH")
+                  : setEtapaCamera("FRENTE")
+              }
               disabled={extraindoDados}
               className="alvo-toque rounded-lg border border-border text-sm font-medium text-text disabled:opacity-60"
             >
@@ -192,32 +246,31 @@ export function VitimaDadosStep({
             </button>
             <button
               type="button"
-              onClick={() => onChange({ ...valor, fotoDocumentoDataUrl: undefined })}
+              onClick={() =>
+                onChange({ ...valor, fotoDocumentoDataUrl: undefined, fotoDocumentoVersoDataUrl: undefined })
+              }
               disabled={extraindoDados}
               className="alvo-toque rounded-lg border border-prioridade-vermelha/50 text-sm font-medium text-prioridade-vermelha disabled:opacity-60"
             >
-              Remover foto
+              Remover foto{valor?.fotoDocumentoVersoDataUrl ? "s" : ""}
             </button>
           </div>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() =>
-            tipoDocumento === "CNH" ? setMostrarCamera(true) : document.getElementById("input-rg-livre")?.click()
-          }
+          onClick={() => setEtapaCamera(tipoDocumento === "CNH" ? "CNH" : "FRENTE")}
           disabled={extraindoDados}
           className="alvo-toque w-full rounded-lg border border-dashed border-border text-text-muted disabled:opacity-60"
         >
-          {extraindoDados ? "Lendo dados do documento…" : "📷 Fotografar documento"}
+          {extraindoDados
+            ? "Lendo dados do documento…"
+            : tipoDocumento === "RG_RS"
+              ? "📷 Fotografar frente do RG"
+              : "📷 Fotografar documento"}
         </button>
       )}
       {avisoExtracao && <p className="mt-2 text-sm text-text-muted">{avisoExtracao}</p>}
-      {tipoDocumento === "RG_RS" && !rgCalibrado && (
-        <p className="mt-2 text-xs text-text-muted">
-          A leitura por posição do RG ainda não foi calibrada — usando leitura de texto livre.
-        </p>
-      )}
 
       <input
         id="input-rg-livre"
@@ -228,11 +281,25 @@ export function VitimaDadosStep({
         className="hidden"
       />
 
-      {mostrarCamera && (
+      {etapaCamera === "CNH" && (
         <DocumentCameraCapture
           modelo={MODELO_CNH}
           onCapturar={handleCapturaCnh}
-          onCancelar={() => setMostrarCamera(false)}
+          onCancelar={() => setEtapaCamera(null)}
+        />
+      )}
+      {etapaCamera === "FRENTE" && (
+        <DocumentCameraCapture
+          modelo={MODELO_RG_RS_FRENTE}
+          onCapturar={handleCapturaRgFrente}
+          onCancelar={() => setEtapaCamera(null)}
+        />
+      )}
+      {etapaCamera === "VERSO" && (
+        <DocumentCameraCapture
+          modelo={MODELO_RG_RS_VERSO}
+          onCapturar={handleCapturaRgVerso}
+          onCancelar={() => setEtapaCamera(null)}
         />
       )}
     </div>

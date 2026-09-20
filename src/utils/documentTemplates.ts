@@ -6,25 +6,21 @@ export interface CampoPosicao {
 }
 
 export interface ModeloDocumento {
-  id: "CNH" | "RG_RS";
+  id: string;
   nome: string;
-  /** Proporção largura/altura da moldura de alinhamento (documento de identidade padrão ≈ 1.586). */
+  /** Proporção largura/altura da moldura de alinhamento. */
   proporcao: number;
-  campos: {
+  campos: Partial<{
     nome: CampoPosicao;
     cpfOuRg: CampoPosicao;
     dataNascimento: CampoPosicao;
-  };
+  }>;
 }
 
 /**
  * Posições calibradas a partir de fotos reais de uma CNH (modelo atual,
  * padrão nacional desde 2016). Coordenadas em percentual, relativas ao
- * retângulo do documento já alinhado pela moldura de captura — por isso
- * são estáveis independente do enquadramento da foto original.
- *
- * Cada caixa tem uma margem de tolerância a mais nas bordas (documentos
- * raramente ficam 100% perfeitos dentro da moldura).
+ * retângulo do documento já alinhado pela moldura de captura.
  */
 export const MODELO_CNH: ModeloDocumento = {
   id: "CNH",
@@ -38,26 +34,30 @@ export const MODELO_CNH: ModeloDocumento = {
 };
 
 /**
- * Placeholder até calibrar com uma foto real de RG do RS — não usar em
- * produção ainda. Quando tiver a foto de referência, recalibrar do mesmo
- * jeito que foi feito para a CNH (ver documentação do projeto).
+ * RG do RS (modelo antigo, Lei nº 7.116/83) — captura em duas etapas,
+ * já que o documento costuma estar plastificado e não dá pra abrir/virar
+ * sem tirar do plástico. Frente traz Nome e Data de Nascimento; Verso
+ * traz o CPF. Calibrado com fotos reais.
  */
-export const MODELO_RG_RS: ModeloDocumento = {
-  id: "RG_RS",
-  nome: "RG (RS)",
-  proporcao: 1.586,
+export const MODELO_RG_RS_FRENTE: ModeloDocumento = {
+  id: "RG_RS_FRENTE",
+  nome: "RG (RS) — Frente",
+  proporcao: 1.4,
   campos: {
-    nome: { x0: 0, y0: 0, x1: 0, y1: 0 },
-    dataNascimento: { x0: 0, y0: 0, x1: 0, y1: 0 },
-    cpfOuRg: { x0: 0, y0: 0, x1: 0, y1: 0 },
+    nome: { x0: 0.42, y0: 0.32, x1: 0.92, y1: 0.42 },
+    dataNascimento: { x0: 0.42, y0: 0.6, x1: 0.65, y1: 0.72 },
   },
 };
 
-export const MODELOS_DISPONIVEIS: Record<"CNH" | "RG_RS", ModeloDocumento> = {
-  CNH: MODELO_CNH,
-  RG_RS: MODELO_RG_RS,
+export const MODELO_RG_RS_VERSO: ModeloDocumento = {
+  id: "RG_RS_VERSO",
+  nome: "RG (RS) — Verso",
+  proporcao: 1.37,
+  campos: {
+    cpfOuRg: { x0: 0.09, y0: 0.14, x1: 0.44, y1: 0.24 },
+  },
 };
 
 export function modeloCalibrado(modelo: ModeloDocumento): boolean {
-  return Object.values(modelo.campos).some((c) => c.x1 - c.x0 > 0.01);
+  return Object.values(modelo.campos).some((c) => c && c.x1 - c.x0 > 0.01);
 }

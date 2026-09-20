@@ -74,9 +74,9 @@ export function gerarRelatorioPdf(atendimento: Atendimento): Blob {
   doc.text(`Data de nascimento: ${dataNascTexto}`, margemEsquerda, y);
   y += 16;
 
-  if (atendimento.vitima?.fotoDocumentoDataUrl) {
+  function inserirFotoDocumento(fotoDataUrl: string) {
     try {
-      const propriedades = doc.getImageProperties(atendimento.vitima.fotoDocumentoDataUrl);
+      const propriedades = doc.getImageProperties(fotoDataUrl);
       const larguraMaxima = 220;
       const largura = Math.min(larguraMaxima, propriedades.width);
       const altura = (propriedades.height * largura) / propriedades.width;
@@ -85,12 +85,19 @@ export function gerarRelatorioPdf(atendimento: Atendimento): Blob {
         doc.addPage();
         y = 50;
       }
-      doc.addImage(atendimento.vitima.fotoDocumentoDataUrl, "JPEG", margemEsquerda, y, largura, altura);
+      doc.addImage(fotoDataUrl, "JPEG", margemEsquerda, y, largura, altura);
       y += altura + 16;
     } catch {
       doc.text("(não foi possível incluir a foto do documento)", margemEsquerda, y);
       y += 14;
     }
+  }
+
+  if (atendimento.vitima?.fotoDocumentoDataUrl) {
+    inserirFotoDocumento(atendimento.vitima.fotoDocumentoDataUrl);
+  }
+  if (atendimento.vitima?.fotoDocumentoVersoDataUrl) {
+    inserirFotoDocumento(atendimento.vitima.fotoDocumentoVersoDataUrl);
   }
 
   // Avaliação primária

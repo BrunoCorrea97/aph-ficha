@@ -86,6 +86,8 @@ export interface DadosVitima {
   documentoCpfRg?: string;
   dataNascimento?: string; // YYYY-MM-DD
   fotoDocumentoDataUrl?: string;
+  /** Só usado quando o documento precisa de duas fotos (ex.: RG frente/verso). */
+  fotoDocumentoVersoDataUrl?: string;
 }
 
 export interface Atendimento {
