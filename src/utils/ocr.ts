@@ -1,4 +1,5 @@
-import { createWorker } from "tesseract.js";
+import { createWorker, PSM } from "tesseract.js";
+import { prepararImagemParaOcr } from "./image";
 
 export interface DadosExtraidos {
   nome?: string;
@@ -10,19 +11,30 @@ export interface DadosExtraidos {
 /**
  * Roda OCR local (Tesseract.js, modelo português) sobre a foto do
  * documento e tenta extrair Nome, CPF/RG e Data de Nascimento por
- * heurística de padrões comuns em documentos brasileiros. Tudo roda no
- * próprio aparelho — a imagem nunca sai do dispositivo.
+ * heurística de padrões comuns em documentos brasileiros (RG, CNH, CIN).
+ * Tudo roda no próprio aparelho — a imagem nunca sai do dispositivo.
  *
- * Nunca deve ser tratado como resultado definitivo: documentos variam
- * muito de formato (RG difere por estado, CNH é diferente etc.) e a
- * qualidade da foto (luz, ângulo, reflexo) afeta bastante a precisão. A
- * tela que usa isso deve sempre deixar os campos editáveis depois.
+ * Calibrado empiricamente com uma CNH real: a imagem é convertida para
+ * escala de cinza com contraste alongado antes do OCR — isso recupera
+ * campos impressos em vermelho/laranja (comuns em CNH) que o OCR
+ * simplesmente não enxerga na foto colorida original, e reduz ruído de
+ * textura em fotos de tela de celular. O modo de segmentação
+ * PSM.SPARSE_TEXT também ajuda bastante em documentos com muitas caixas
+ * separadas (rótulo numa caixa, valor em outra).
+ *
+ * Nunca deve ser tratado como resultado definitivo: a tela que usa isso
+ * sempre deixa os campos editáveis depois, e esta função prefere
+ * devolver "não encontrado" a arriscar um valor errado quando o texto
+ * lido não bate com o formato esperado (ex.: uma data com uma letra no
+ * lugar de um dígito).
  *
  * Os arquivos do motor (worker, wasm, pacote de idioma) ficam em
  * /tesseract/ dentro de public/ — carregados localmente, sem depender de
  * nenhum CDN externo, para não quebrar o funcionamento offline.
  */
 export async function extrairDadosDocumento(imagemDataUrl: string): Promise<DadosExtraidos> {
+  const imagemParaOcr = await prepararImagemParaOcr(imagemDataUrl);
+
   const worker = await createWorker("por", 1, {
     workerPath: "/tesseract/worker.min.js",
     corePath: "/tesseract/tesseract-core-lstm.wasm.js",
@@ -31,58 +43,71 @@ export async function extrairDadosDocumento(imagemDataUrl: string): Promise<Dado
   });
 
   try {
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
     const {
       data: { text },
-    } = await worker.recognize(imagemDataUrl);
+    } = await worker.recognize(imagemParaOcr);
     return { ...extrairCampos(text), textoCompleto: text };
   } finally {
     await worker.terminate();
   }
 }
 
-function extrairCampos(texto: string): Omit<DadosExtraidos, "textoCompleto"> {
+export function extrairCampos(texto: string): Omit<DadosExtraidos, "textoCompleto"> {
   const linhas = texto
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
 
   return {
-    documentoCpfRg: extrairCpfOuRg(texto),
-    dataNascimento: extrairDataNascimento(texto),
+    documentoCpfRg: extrairCpfOuRg(texto, linhas),
+    dataNascimento: extrairDataNascimento(linhas),
     nome: extrairNome(linhas),
   };
 }
 
-/** CPF (XXX.XXX.XXX-XX) tem prioridade por ser um padrão inconfundível; senão tenta um RG (7 a 9 dígitos, com ou sem pontuação). */
-function extrairCpfOuRg(texto: string): string | undefined {
-  const cpf = texto.match(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/);
-  if (cpf) return cpf[0];
+/**
+ * CPF (XXX.XXX.XXX-XX) — exige a pontuação para não confundir com outros
+ * números do documento (Nº de registro, doc. de identidade etc., que
+ * costumam ter 9-11 dígitos corridos sem pontuação). Tolera um espaço
+ * perdido pelo OCR ao lado de um ponto/traço.
+ */
+function extrairCpfOuRg(texto: string, linhas: string[]): string | undefined {
+  const cpf = texto.match(/\d{3}\.\s?\d{3}\.\s?\d{3}-\s?\d{2}/);
+  if (cpf) return cpf[0].replace(/\s/g, "");
 
-  const rg = texto.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-?[\dXx]?\b/);
-  if (rg && rg[0].replace(/\D/g, "").length >= 7) return rg[0];
-
+  // RG: procura uma linha rotulada como identidade/RG e pega o primeiro
+  // número com 7+ dígitos nela (ou na linha seguinte).
+  const idxRotulo = linhas.findIndex((l) => /identidade|\brg\b/i.test(l));
+  if (idxRotulo !== -1) {
+    for (const linha of [linhas[idxRotulo], linhas[idxRotulo + 1]]) {
+      const m = linha?.match(/\d[\d.]{6,}\d/);
+      if (m) return m[0];
+    }
+  }
   return undefined;
 }
 
-/** Datas no formato DD/MM/AAAA ou DD-MM-AAAA — pega a primeira encontrada perto de "NASC" quando possível, senão a primeira data válida do texto. */
-function extrairDataNascimento(texto: string): string | undefined {
-  const linhas = texto.split("\n");
-  const padraoData = /(\d{2})[/.-](\d{2})[/.-](\d{4})/;
+/**
+ * Procura a linha com "nascimento" e usa a data encontrada nela ou na
+ * linha seguinte — layout comum em RG/CNH/CIN é rótulo numa linha, valor
+ * na próxima. Aceita dia/mês com 1 ou 2 dígitos (o OCR às vezes perde um
+ * dígito em números repetidos, ex. "11" lido como "1"), mas nunca inventa
+ * um dígito que não apareceu — se a data não bate com esse formato,
+ * prefere devolver nada a arriscar uma data errada.
+ */
+function extrairDataNascimento(linhas: string[]): string | undefined {
+  const padraoData = /(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/;
+  const idxRotulo = linhas.findIndex((l) => /nascimento/i.test(l));
+  if (idxRotulo === -1) return undefined;
 
-  const linhaComNasc = linhas.find((l) => /nasc/i.test(l));
-  if (linhaComNasc) {
-    const m = linhaComNasc.match(padraoData);
-    if (m) return isoValido(m[1], m[2], m[3]);
-    // Às vezes a data vem na linha seguinte à do rótulo "NASCIMENTO".
-    const idx = linhas.indexOf(linhaComNasc);
-    const proxima = linhas[idx + 1];
-    const m2 = proxima?.match(padraoData);
-    if (m2) return isoValido(m2[1], m2[2], m2[3]);
+  for (const linha of [linhas[idxRotulo], linhas[idxRotulo + 1], linhas[idxRotulo + 2]]) {
+    const m = linha?.match(padraoData);
+    if (m) {
+      const iso = isoValido(m[1], m[2], m[3]);
+      if (iso) return iso;
+    }
   }
-
-  const qualquerData = texto.match(padraoData);
-  if (qualquerData) return isoValido(qualquerData[1], qualquerData[2], qualquerData[3]);
-
   return undefined;
 }
 
@@ -91,21 +116,43 @@ function isoValido(dia: string, mes: string, ano: string): string | undefined {
   const m = Number(mes);
   const a = Number(ano);
   if (d < 1 || d > 31 || m < 1 || m > 12 || a < 1900 || a > new Date().getFullYear()) return undefined;
-  return `${ano}-${mes}-${dia}`;
+  return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
 }
 
-/** Procura a linha após um rótulo "NOME" — comum em RG, CNH e CIN brasileiras. */
+/**
+ * Procura uma linha rotulada como nome ("NOME", "NOME E SOBRENOME") e
+ * usa a linha seguinte como candidata — nunca tenta separar rótulo e
+ * valor numa mesma linha (documentos reais quase sempre têm o rótulo
+ * numa caixa e o valor abaixo). A candidata é validada: só letras,
+ * espaços e acentos, pelo menos duas palavras — qualquer coisa com
+ * dígito, barra vertical ou símbolo é cortada fora antes de validar,
+ * pra não devolver lixo de OCR (datas/linhas vizinhas coladas por engano).
+ */
 function extrairNome(linhas: string[]): string | undefined {
-  const idxRotulo = linhas.findIndex((l) => /^nome[:\s]*$/i.test(l) || /^nome\b/i.test(l));
+  const idxRotulo = linhas.findIndex((l) => /\bnome\b/i.test(l));
   if (idxRotulo === -1) return undefined;
 
-  // Se o rótulo e o nome estiverem na mesma linha ("NOME: FULANO DA SILVA").
-  const mesmaLinha = linhas[idxRotulo].replace(/^nome[:\s]*/i, "").trim();
-  if (mesmaLinha.length > 3) return mesmaLinha;
-
-  // Senão, assume que o nome está na linha seguinte.
-  const proxima = linhas[idxRotulo + 1]?.trim();
-  if (proxima && proxima.length > 3 && !/^\d/.test(proxima)) return proxima;
-
+  for (const candidata of [linhas[idxRotulo + 1], linhas[idxRotulo + 2]]) {
+    if (!candidata) continue;
+    const limpo = limparCandidatoNome(candidata);
+    if (nomeParecevalido(limpo)) return limpo;
+  }
   return undefined;
+}
+
+function limparCandidatoNome(linha: string): string {
+  // Corta a partir do primeiro dígito ou barra vertical (geralmente é
+  // onde um campo vizinho colou nessa mesma linha), depois remove
+  // qualquer símbolo que não seja letra/espaço/hífen/apóstrofo.
+  const cortado = linha.split(/[|0-9]/)[0];
+  return cortado
+    .replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function nomeParecevalido(nome: string): boolean {
+  if (nome.length < 4 || nome.length > 70) return false;
+  const palavras = nome.split(" ").filter(Boolean);
+  return palavras.length >= 2 && palavras.every((p) => p.length >= 1);
 }
