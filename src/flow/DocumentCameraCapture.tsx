@@ -1,33 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-import type { ModeloDocumento } from "../utils/documentTemplates";
+import type { ModeloDocumento, CampoPosicao } from "../utils/documentTemplates";
+
+interface RetanguloPx {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Transforma um campo calibrado no espaço "normal de leitura" (a
+ * orientação em que o documento foi calibrado — ver documentTemplates.ts)
+ * para o espaço da moldura ao vivo (documento deitado, vertical na tela).
+ * É o inverso exato da rotação aplicada em capturar(): lá a imagem
+ * capturada deitada é girada -90° para virar a imagem "alinhada"; aqui
+ * fazemos o caminho contrário só para desenhar a prévia na tela.
+ * Dedução: upright(u,v) vem de recorte(a,b) com u=b, v=1-a — logo,
+ * para desenhar a prévia a partir de um campo em coordenadas upright,
+ * usamos a=1-v, b=u.
+ */
+function paraEspacoDaMoldura(campo: CampoPosicao): CampoPosicao {
+  return {
+    x0: 1 - campo.y1,
+    y0: campo.x0,
+    x1: 1 - campo.y0,
+    y1: campo.x1,
+  };
+}
 
 /**
  * Câmera embutida no app (em vez de abrir o app de câmera nativo).
  *
- * Duas decisões de design que vieram de teste real (não são só estética):
+ * A moldura é vertical, usando o lado mais comprido do quadro da câmera
+ * — não a largura. O documento é fisicamente horizontal; pedindo pra
+ * girá-lo dentro de uma moldura vertical, o recorte usa o lado mais
+ * comprido do sensor, capturando bem mais pixels por campo depois
+ * (testado: resolução baixa era a causa raiz da imprecisão da leitura).
  *
- * 1. A moldura é desenhada na VERTICAL, usando o lado mais comprido do
- *    quadro da câmera (normalmente a altura, com o celular na posição
- *    normal) — não a largura. Isso porque o documento é fisicamente
- *    horizontal (mais largo que alto); se a moldura também fosse
- *    horizontal, ela ficaria limitada pela largura do vídeo (o lado mais
- *    curto), desperdiçando resolução. Girando a moldura pra vertical (e
- *    pedindo pra girar o documento físico dentro dela), o recorte usa o
- *    lado mais comprido do sensor, capturando bem mais pixels por campo
- *    — testado e confirmado que resolução baixa era a causa raiz da
- *    imprecisão da leitura, não a lógica de extração.
+ * As sub-molduras dos campos (nome, data, CPF) aparecem em tempo real
+ * dentro da moldura principal — a pessoa vê onde cada campo precisa
+ * cair e ajusta o enquadramento antes de capturar.
  *
- * 2. Mostra sub-molduras dos campos (nome, data, CPF) dentro da moldura
- *    principal, em tempo real — assim a pessoa vê exatamente onde cada
- *    campo precisa cair e ajusta o enquadramento antes de capturar, em
- *    vez de confiar cegamente que "documento dentro da moldura grande"
- *    é suficiente para os recortes internos caírem no lugar certo.
- *
- * Depois de capturar, a imagem (que sai deitada, na orientação em que a
- * câmera realmente vê) é girada programaticamente para a orientação
- * normal de leitura antes de aplicar as posições calibradas dos campos —
- * assim a calibração (feita sempre olhando o documento na posição normal
- * de leitura) continua valendo sem precisar recalcular nada.
+ * Todo o tamanho/posição é calculado em JavaScript (não via CSS
+ * aspect-ratio) para evitar imprecisões de cálculo entre navegadores.
  */
 export function DocumentCameraCapture({
   modelo,
@@ -39,9 +54,11 @@ export function DocumentCameraCapture({
   onCancelar: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [pronto, setPronto] = useState(false);
+  const [molduraPx, setMolduraPx] = useState<RetanguloPx | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -77,21 +94,46 @@ export function DocumentCameraCapture({
     };
   }, []);
 
+  // Calcula o retângulo da moldura em pixels de tela, direto do tamanho
+  // real do contêiner — evita depender de aspect-ratio via CSS.
+  useEffect(() => {
+    function recalcular() {
+      const el = containerRef.current;
+      if (!el) return;
+      const { width: larguraTela, height: alturaTela } = el.getBoundingClientRect();
+      const alturaMoldura = alturaTela * 0.78;
+      const larguraMoldura = Math.min(alturaMoldura / modelo.proporcao, larguraTela * 0.9);
+      setMolduraPx({
+        left: (larguraTela - larguraMoldura) / 2,
+        top: (alturaTela - alturaMoldura) / 2,
+        width: larguraMoldura,
+        height: alturaMoldura,
+      });
+    }
+    recalcular();
+    window.addEventListener("resize", recalcular);
+    return () => window.removeEventListener("resize", recalcular);
+  }, [modelo.proporcao, pronto]);
+
   function capturar() {
     const video = videoRef.current;
-    if (!video) return;
+    const container = containerRef.current;
+    if (!video || !container || !molduraPx) return;
 
-    // Moldura vertical: usa o lado mais comprido do vídeo (normalmente a
-    // altura) como base, não a largura — é o que garante mais pixels
-    // reais por campo recortado depois.
-    const ladoComprido = Math.max(video.videoWidth, video.videoHeight);
-    const ladoCurto = Math.min(video.videoWidth, video.videoHeight);
-    const alturaMoldura = ladoComprido * 0.88;
-    const larguraMoldura = alturaMoldura / modelo.proporcao;
-    const larguraFinal = Math.min(larguraMoldura, ladoCurto * 0.97);
+    // Converte o retângulo da moldura (em pixels de tela) para pixels
+    // reais do vídeo — a proporção entre os dois pode diferir (o vídeo
+    // preenche a tela via object-cover, cortando as bordas).
+    const telaRect = container.getBoundingClientRect();
+    const escalaVideo = Math.max(video.videoWidth / telaRect.width, video.videoHeight / telaRect.height);
+    const videoVisivelLargura = telaRect.width * escalaVideo;
+    const videoVisivelAltura = telaRect.height * escalaVideo;
+    const offsetX = (videoVisivelLargura - video.videoWidth) / 2;
+    const offsetY = (videoVisivelAltura - video.videoHeight) / 2;
 
-    const x = (video.videoWidth - larguraFinal) / 2;
-    const y = (video.videoHeight - alturaMoldura) / 2;
+    const x = molduraPx.left * escalaVideo - offsetX;
+    const y = molduraPx.top * escalaVideo - offsetY;
+    const larguraFinal = molduraPx.width * escalaVideo;
+    const alturaMoldura = molduraPx.height * escalaVideo;
 
     // 1) Recorta a região da moldura, exatamente como a câmera vê
     // (documento deitado dentro da moldura vertical).
@@ -102,9 +144,7 @@ export function DocumentCameraCapture({
     if (!ctxRecorte) return;
     ctxRecorte.drawImage(video, x, y, larguraFinal, alturaMoldura, 0, 0, larguraFinal, alturaMoldura);
 
-    // 2) Gira 90° para a orientação normal de leitura — o documento entra
-    // deitado na moldura vertical, então o recorte sai "deitado" e
-    // precisa girar para ficar na posição em que foi calibrado.
+    // 2) Gira 90° para a orientação normal de leitura.
     const alinhado = document.createElement("canvas");
     alinhado.width = alturaMoldura;
     alinhado.height = larguraFinal;
@@ -122,8 +162,11 @@ export function DocumentCameraCapture({
     onCancelar();
   }
 
-  // Proporção da moldura na tela: vertical, largura/altura = 1/proporcao.
-  const proporcaoTela = 1 / modelo.proporcao;
+  const campos = [
+    modelo.campos.nome && { campo: modelo.campos.nome, label: "Nome" },
+    modelo.campos.dataNascimento && { campo: modelo.campos.dataNascimento, label: "Nascimento" },
+    modelo.campos.cpfOuRg && { campo: modelo.campos.cpfOuRg, label: "CPF/RG" },
+  ].filter((c): c is { campo: CampoPosicao; label: string } => Boolean(c));
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
@@ -140,39 +183,39 @@ export function DocumentCameraCapture({
         </div>
       ) : (
         <>
-          <div className="relative flex-1 overflow-hidden">
+          <div ref={containerRef} className="relative flex-1 overflow-hidden">
             <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
-            {pronto && (
-              <div
-                className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border-2 border-accent-strong"
-                style={{
-                  height: "88%",
-                  aspectRatio: `${proporcaoTela}`,
-                  boxShadow: "0 0 0 999px rgba(0,0,0,0.55)",
-                }}
-              >
-                {/* Sub-molduras dos campos — desenhadas no sistema de
-                    coordenadas "normal de leitura" (a mesma da
-                    calibração) e giradas de volta pra encaixar na
-                    moldura vertical da tela. */}
+            {pronto && molduraPx && (
+              <>
                 <div
-                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                  className="pointer-events-none absolute rounded-lg border-2 border-white"
                   style={{
-                    width: "100%",
-                    aspectRatio: `${modelo.proporcao}`,
-                    transform: "translate(-50%, -50%) rotate(90deg)",
+                    left: molduraPx.left,
+                    top: molduraPx.top,
+                    width: molduraPx.width,
+                    height: molduraPx.height,
+                    boxShadow: "0 0 0 999px rgba(0,0,0,0.6)",
                   }}
-                >
-                  {modelo.campos.nome && <CampoOverlay campo={modelo.campos.nome} label="Nome" />}
-                  {modelo.campos.dataNascimento && (
-                    <CampoOverlay campo={modelo.campos.dataNascimento} label="Nascimento" />
-                  )}
-                  {modelo.campos.cpfOuRg && <CampoOverlay campo={modelo.campos.cpfOuRg} label="CPF/RG" />}
-                </div>
-              </div>
+                />
+                {campos.map(({ campo, label }) => {
+                  const c = paraEspacoDaMoldura(campo);
+                  const left = molduraPx.left + c.x0 * molduraPx.width;
+                  const top = molduraPx.top + c.y0 * molduraPx.height;
+                  const largura = (c.x1 - c.x0) * molduraPx.width;
+                  const altura = (c.y1 - c.y0) * molduraPx.height;
+                  return (
+                    <div key={label} className="pointer-events-none absolute" style={{ left, top, width: largura, height: altura }}>
+                      <div className="h-full w-full rounded border-2 border-orange-400" />
+                      <span className="absolute left-0 top-full mt-0.5 whitespace-nowrap rounded bg-orange-400 px-1 py-0.5 text-[10px] font-medium text-black">
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
             )}
-            <p className="absolute bottom-4 left-0 right-0 text-center text-sm text-white/90">
-              Gire o documento e alinhe {modelo.nome} na vertical — encaixe cada campo na sua caixinha
+            <p className="absolute bottom-4 left-0 right-0 px-4 text-center text-sm text-white/90">
+              Gire o documento e alinhe {modelo.nome} na vertical — encaixe cada campo na sua caixinha laranja
             </p>
           </div>
           <div className="flex items-center justify-center gap-4 bg-black p-6">
@@ -194,30 +237,6 @@ export function DocumentCameraCapture({
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-function CampoOverlay({
-  campo,
-  label,
-}: {
-  campo: { x0: number; y0: number; x1: number; y1: number };
-  label: string;
-}) {
-  return (
-    <div
-      className="absolute flex items-start justify-start overflow-hidden rounded border border-dashed border-white/80"
-      style={{
-        left: `${campo.x0 * 100}%`,
-        top: `${campo.y0 * 100}%`,
-        width: `${(campo.x1 - campo.x0) * 100}%`,
-        height: `${(campo.y1 - campo.y0) * 100}%`,
-      }}
-    >
-      <span className="bg-black/60 px-1 text-[9px] leading-tight text-white" style={{ transform: "rotate(-90deg) translateX(-100%)", transformOrigin: "top left" }}>
-        {label}
-      </span>
     </div>
   );
 }
